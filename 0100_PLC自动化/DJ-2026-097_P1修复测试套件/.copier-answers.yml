@@ -1,8 +1,0 @@
-# Copier answers - 请勿手动修改
-project_id: DJ-2026-097
-project_name: P1修复测试套件
-description: 测试test-suite模板
-version: V1.0.0
-stack: plc
-mode: test-suite
-business_line: DJ

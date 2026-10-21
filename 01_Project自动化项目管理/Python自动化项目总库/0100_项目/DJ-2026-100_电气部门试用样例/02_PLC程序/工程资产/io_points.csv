@@ -1,5 +1,0 @@
-station,signal_type,address,tag,signal_name,device,comment
-common,DI,I0.0,ESTOP_OK,急停回路正常,操作台,TRUE=安全链路闭合
-conveyor,DI,I0.1,PART_PRESENT,来料检测光电,输送段1,用于触发分料流程
-conveyor,DO,Q0.0,CONVEYOR_RUN,输送带运行,变频器,TRUE=正转运行
-external,DO,Q0.1,UPSTREAM_REQ,上游请求送料,上游设备,联机交互信号

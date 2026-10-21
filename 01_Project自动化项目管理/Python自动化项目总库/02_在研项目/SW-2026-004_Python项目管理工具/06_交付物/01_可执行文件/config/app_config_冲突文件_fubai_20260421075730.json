@@ -1,1 +1,0 @@
-{"app_name": "Python项目管理工具", "version": "2.5.9", "default_project_path": "./Projects", "language": "zh-CN", "theme": "light", "auto_backup": true, "backup_interval": 3600, "api_enabled": true, "api_host": "127.0.0.1", "api_port": 5000, "debug_mode": false}

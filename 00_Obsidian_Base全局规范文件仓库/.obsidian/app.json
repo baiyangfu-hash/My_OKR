@@ -1,9 +1,0 @@
-{
-  "openBehavior": "",
-  "attachmentFolderPath": "/",
-  "userIgnoreFilters": [
-    "**/.trae/**",
-    "**/_archive/**",
-    "**/.plc-out/**"
-  ]
-}

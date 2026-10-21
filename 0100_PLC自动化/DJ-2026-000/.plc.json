@@ -1,8 +1,0 @@
-{
-  "name": "DJ-2026-000",
-  "description": "SysLib公共库FB测试套件 - 验证FB_1011/FB_1012/FB_1014等共享库功能块",
-  "version": "2.0.0",
-  "libraries": [
-    "../01_SharedLibraries/SysLib"
-  ]
-}

@@ -1,6 +1,0 @@
-- [x] get_workspace_projects() 通过 ThreadPoolExecutor 在后台线程执行，不再阻塞 PyWebView 主线程
-- [x] _scan_change_dir 有 max_depth 参数且默认值为3，防止无限递归
-- [x] app.js DOMContentLoaded handler 中 initSpecConstants 和 getWorkspaceInfo 均有 try-catch 保护
-- [x] api.js _ensureReady() 有 10s 超时保护
-- [x] pytest 61项全部通过，零回归
-- [x] run_e2e.py --no-gui 117项全部通过，零回归

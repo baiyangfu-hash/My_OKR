@@ -1,8 +1,0 @@
-{
-    "secret_key": "your-secret-key-here",
-    "token_expire_hours": 24,
-    "cors_enabled": true,
-    "rate_limit_enabled": true,
-    "rate_limit": "100 per minute",
-    "swagger_enabled": true
-}
