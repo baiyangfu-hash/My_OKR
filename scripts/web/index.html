@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的 OKR</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --text: #1f2328; --muted: #6b7280; --line: #e5e7eb;
+  --track: #e9ebef; --accent: #2563eb; --accent-text: #ffffff; --hover: #f3f4f6;
+  --green: #16a34a; --yellow: #d97706; --red: #dc2626; --done: #0d9488;
+  --d-work: #2563eb; --d-study: #7c3aed; --d-health: #059669; --d-other: #64748b;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 1px 8px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --card: #181b21; --text: #e6e8eb; --muted: #9aa1ab; --line: #2a2f37;
+    --track: #2a2f37; --accent: #3b82f6; --hover: #20242b;
+    --green: #22c55e; --yellow: #f59e0b; --red: #f87171; --done: #2dd4bf;
+    --d-work: #60a5fa; --d-study: #a78bfa; --d-health: #34d399; --d-other: #94a3b8;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --card: #181b21; --text: #e6e8eb; --muted: #9aa1ab; --line: #2a2f37;
+  --track: #2a2f37; --accent: #3b82f6; --hover: #20242b;
+  --green: #22c55e; --yellow: #f59e0b; --red: #f87171; --done: #2dd4bf;
+  --d-work: #60a5fa; --d-study: #a78bfa; --d-health: #34d399; --d-other: #94a3b8;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+.wrap { max-width: 920px; margin: 0 auto; padding: 20px 16px 60px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; }
+header h1 { font-size: 22px; margin: 0 8px 0 0; }
+.spacer { flex: 1; }
+select, input, button { font: inherit; color: inherit; }
+select, input[type=text], input[type=number] {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+}
+button, .btn {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px;
+  cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+  white-space: nowrap; color: var(--text);
+}
+button:hover, .btn:hover { background: var(--hover); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.primary:hover { filter: brightness(1.08); }
+button.icon { padding: 4px 8px; border-color: transparent; background: transparent; color: var(--muted); }
+button.icon:hover { background: var(--hover); color: var(--text); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.summary { padding: 16px 18px; margin-bottom: 16px; display: grid; gap: 12px; }
+.row { display: flex; align-items: center; gap: 12px; }
+.label { width: 84px; color: var(--muted); flex: none; white-space: nowrap; }
+.bar { flex: 1; min-width: 40px; height: 10px; background: var(--track); border-radius: 99px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s; }
+.bar.time > i { background: var(--muted); }
+.num { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.s-green { color: var(--green); } .s-yellow { color: var(--yellow); }
+.s-red { color: var(--red); } .s-done { color: var(--done); }
+.domains { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 18px; }
+.domains .row { gap: 8px; flex-wrap: nowrap; }
+.tag { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; color: #fff; white-space: nowrap; }
+.links { display: flex; flex-wrap: wrap; gap: 8px; }
+.obj { margin-bottom: 14px; overflow: hidden; }
+.obj-head { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px 18px; flex-wrap: wrap; }
+.obj-head h2 { font-size: 17px; margin: 0; flex: 1; min-width: 180px; }
+.obj-bar { padding: 0 18px 12px; }
+.krs { border-top: 1px solid var(--line); }
+.kr {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto 110px auto; align-items: center;
+  gap: 10px; padding: 8px 14px 8px 18px; border-bottom: 1px solid var(--line);
+}
+.kr:last-child { border-bottom: 0; }
+.kr input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.kr .t { overflow-wrap: anywhere; }
+.kr.done .t { color: var(--muted); }
+.kr.dropped .t { text-decoration: line-through; color: var(--muted); }
+.kr.dropped .mini, .kr.dropped .stepper { opacity: .4; }
+.stepper { display: flex; align-items: center; gap: 4px; color: var(--muted); white-space: nowrap; }
+.stepper input { width: 64px; text-align: right; padding: 4px 6px; color: var(--text); }
+.stepper button { padding: 2px 9px; }
+.mini { display: flex; align-items: center; gap: 6px; }
+.mini .bar { min-width: 50px; height: 6px; }
+.mini .num { width: 38px; font-weight: 500; font-size: 13px; }
+.ops { display: flex; }
+.empty { padding: 14px 18px; color: var(--muted); }
+.add-kr { padding: 8px 14px 12px 18px; }
+.add-kr button { border-style: dashed; color: var(--muted); }
+.hero { padding: 40px 20px; text-align: center; }
+.hero p { color: var(--muted); }
+dialog {
+  border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(440px, calc(100vw - 32px));
+  background: var(--card); color: var(--text);
+}
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog form { padding: 20px; display: grid; gap: 12px; }
+dialog h3 { margin: 0 0 4px; }
+dialog label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+dialog label { min-width: 0; }
+dialog label > input:not([type=radio]) { color: var(--text); font-size: 15px; width: 100%; min-width: 0; }
+.seg { display: flex; gap: 16px; color: var(--text); }
+.seg label { display: flex; align-items: center; gap: 6px; font-size: 15px; color: var(--text); }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100vw - 32px);
+  background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.2); display: none; gap: 10px; align-items: center; z-index: 10;
+}
+.toast.show { display: flex; }
+.toast a { color: inherit; font-weight: 600; }
+.toast.err { background: var(--red); color: #fff; }
+.foot { color: var(--muted); font-size: 13px; margin-top: 24px; text-align: center; }
+.foot a { color: inherit; }
+@media (max-width: 640px) {
+  .kr { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .kr .stepper { grid-column: 2 / 4; }
+  .kr .mini { grid-column: 2 / 3; }
+  .kr .ops { grid-column: 3; grid-row: 1; }
+  .label { width: 72px; }
+  .row { gap: 8px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎯 我的 OKR</h1>
+    <select id="quarterSel" aria-label="选择季度"></select>
+    <span class="spacer"></span>
+    <button id="addObjBtn" class="primary">＋ 新目标</button>
+    <button id="reloadBtn" title="重新读取文件（在 Obsidian 改过之后）">⟳ 刷新</button>
+  </header>
+  <main id="app"><div class="empty">加载中…</div></main>
+  <div class="foot">数据保存在仓库的 <code>okr/</code> 文件夹（Markdown），每次修改都会自动更新 <code>dashboard.md</code>。</div>
+</div>
+
+<dialog id="krDlg">
+  <form method="dialog" id="krForm">
+    <h3 id="krDlgTitle">KR</h3>
+    <label>KR 内容<input type="text" name="title" required placeholder="例如：完成机器人项目"></label>
+    <div class="seg">
+      <label><input type="radio" name="kind" value="num" checked> 数值型（有目标数）</label>
+      <label><input type="radio" name="kind" value="check"> 勾选型（做到/没做到）</label>
+    </div>
+    <div class="grid3" id="numFields">
+      <label>当前值<input type="number" name="current" min="0" step="any" value="0"></label>
+      <label>目标值<input type="number" name="target" min="0" step="any" placeholder="如 10"></label>
+      <label>单位<input type="text" name="unit" placeholder="次 / 个 / kg"></label>
+    </div>
+    <div class="actions">
+      <button type="button" data-close>取消</button>
+      <button type="submit" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="objDlg">
+  <form method="dialog" id="objForm">
+    <h3 id="objDlgTitle">目标</h3>
+    <label>目标（O）<input type="text" name="title" required placeholder="例如：成为三菱机器人熟练工程师"></label>
+    <label>领域<input type="text" name="domain" list="domainList" required placeholder="工作 / 学习 / 健康"></label>
+    <datalist id="domainList"></datalist>
+    <div class="actions">
+      <button type="button" data-close>取消</button>
+      <button type="submit" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const DEFAULT_DOMAINS = ["工作", "学习", "健康"];
+const DOMAIN_COLORS = { 工作: "--d-work", 学习: "--d-study", 健康: "--d-health" };
+let S = null;
+let selected = decodeURIComponent(location.hash.slice(1)) || "";
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pct = (p) => Math.round(p * 100) + "%";
+const fmt = (n) => (n == null ? "" : String(Math.round(n * 1000) / 1000));
+const obsidian = (abs) => "obsidian://open?path=" + encodeURIComponent(abs);
+const domainColor = (d) => `var(${DOMAIN_COLORS[d] || "--d-other"})`;
+
+function statusChip(s) {
+  if (!s) return "";
+  const cls = s.includes("完成") ? "s-done" : s.includes("正常") ? "s-green" : s.includes("预警") ? "s-yellow" : "s-red";
+  return `<span class="chip ${cls}">${esc(s)}</span>`;
+}
+const bar = (p, cls = "") => `<div class="bar ${cls}"><i style="width:${Math.min(p, 1) * 100}%"></i></div>`;
+
+let toastTimer;
+function toast(html, isErr = false) {
+  const t = $("#toast");
+  t.innerHTML = html;
+  t.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = "toast"), isErr ? 6000 : 4000);
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/state?quarter=" + encodeURIComponent(selected));
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    S = data;
+    selected = S.quarter ? S.quarter.name : "";
+    render();
+  } catch (e) {
+    $("#app").innerHTML = `<div class="card hero"><h2>连不上 OKR 服务</h2><p>${esc(e.message)}</p><p>请确认 okr.bat 的黑色窗口还开着。</p></div>`;
+  }
+}
+
+async function post(path, body) {
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-OKR": "1" },
+      body: JSON.stringify({ quarter: selected, ...body }),
+    });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    return data;
+  } catch (e) {
+    toast(esc(e.message), true);
+    return null;
+  } finally {
+    await load();
+  }
+}
+
+function render() {
+  const sel = $("#quarterSel");
+  const names = S.quarters.map((q) => q.name);
+  sel.innerHTML = S.quarters.map((q) => `<option value="${esc(q.name)}">${esc(q.name)}（${pct(q.progress)}）</option>`).join("");
+  sel.value = selected;
+  sel.style.display = names.length ? "" : "none";
+  $("#addObjBtn").style.display = S.quarter ? "" : "none";
+  if (selected) history.replaceState(null, "", "#" + encodeURIComponent(selected));
+
+  const domains = new Set(DEFAULT_DOMAINS);
+  (S.quarter?.objectives || []).forEach((o) => domains.add(o.domain));
+  $("#domainList").innerHTML = [...domains].map((d) => `<option value="${esc(d)}">`).join("");
+
+  let html = "";
+  if (!names.includes(S.this_quarter)) {
+    html += `<div class="card hero"><h2>${esc(S.this_quarter)} 还没有 OKR</h2>
+      <p>先建一个本季度的 OKR 文件，再添加目标和 KR。</p>
+      <button class="primary" data-create="quarter" data-date="${esc(S.today)}">新建 ${esc(S.this_quarter)} OKR</button></div>`;
+  }
+  const q = S.quarter;
+  if (q) html += renderSummary(q) + q.objectives.map(renderObjective).join("");
+  if (q && !q.objectives.length) {
+    html += `<div class="card hero"><p>这个季度还没有目标。建议 2~4 个目标，每个目标 2~4 个 KR。</p>
+      <button class="primary" data-act="addObj">＋ 添加第一个目标</button></div>`;
+  }
+  $("#app").innerHTML = html;
+}
+
+function fileLink(kind, label) {
+  const f = S.files[kind];
+  return f.exists
+    ? `<a class="btn" href="${obsidian(f.abs)}" title="${esc(f.path)}">📄 ${label}</a>`
+    : `<button data-create="${kind}" title="新建 ${esc(f.path)}">＋ ${label}</button>`;
+}
+
+function renderSummary(q) {
+  const nq = S.next_quarter;
+  const hasNext = S.quarters.some((x) => x.name === nq.name);
+  return `<section class="card summary">
+    <div class="row"><span class="label">⏱️ 时间</span>${bar(q.time_progress, "time")}<span class="num">${pct(q.time_progress)}</span>
+      <span class="chip" style="color:var(--muted)">剩 ${q.days_left} 天</span></div>
+    <div class="row"><span class="label">🎯 完成度</span>${bar(q.progress)}<span class="num">${pct(q.progress)}</span>${statusChip(q.status)}</div>
+    ${q.domains.length ? `<div class="domains">${q.domains.map((d) => `<div class="row">
+      <span class="tag" style="background:${domainColor(d.name)}">#${esc(d.name)}</span>${bar(d.progress)}<span class="num">${pct(d.progress)}</span></div>`).join("")}</div>` : ""}
+    <div class="links">
+      <a class="btn" href="${obsidian(q.file.abs)}" title="${esc(q.file.path)}">📝 在 Obsidian 打开</a>
+      ${fileLink("week", "本周周报")}
+      ${fileLink("review", "季度复盘")}
+      ${fileLink("year", "年度目标")}
+      ${S.dashboard.exists ? `<a class="btn" href="${obsidian(S.dashboard.abs)}">📊 仪表盘</a>` : ""}
+      ${hasNext ? "" : `<button data-create="quarter" data-date="${esc(nq.date)}">＋ 新建 ${esc(nq.name)}</button>`}
+    </div>
+  </section>`;
+}
+
+function renderObjective(o, oi) {
+  return `<section class="card obj" data-o="${oi}">
+    <div class="obj-head">
+      <span class="tag" style="background:${domainColor(o.domain)}">#${esc(o.domain)}</span>
+      <h2>${esc(o.title)}</h2>
+      <span class="num">${pct(o.progress)}</span>${statusChip(o.status)}
+      <span class="ops"><button class="icon" data-act="editObj" title="编辑目标">✎</button>
+      <button class="icon" data-act="delObj" title="删除目标">🗑</button></span>
+    </div>
+    <div class="obj-bar">${bar(o.progress)}</div>
+    <div class="krs">${o.krs.length ? o.krs.map((k, ki) => renderKr(k, ki)).join("") : `<div class="empty">还没有 KR</div>`}</div>
+    <div class="add-kr"><button data-act="addKr">＋ 添加 KR</button></div>
+  </section>`;
+}
+
+function renderKr(k, ki) {
+  const numeric = k.target != null;
+  const cls = k.dropped ? "dropped" : k.checked ? "done" : "";
+  const stepper = numeric
+    ? `<div class="stepper"><button data-act="dec" title="减 1" ${k.dropped ? "disabled" : ""}>−</button>
+        <input type="number" min="0" step="any" value="${fmt(k.current)}" data-act="set" aria-label="当前值" ${k.dropped ? "disabled" : ""}>
+        <span>/ ${fmt(k.target)} ${esc(k.unit)}</span>
+        <button data-act="inc" title="加 1" ${k.dropped ? "disabled" : ""}>＋</button></div>`
+    : `<span></span>`;
+  return `<div class="kr ${cls}" data-k="${ki}">
+    <input type="checkbox" data-act="toggle" ${k.checked ? "checked" : ""} ${k.dropped ? "disabled" : ""} title="标记完成">
+    <div class="t">${esc(k.title)}</div>
+    ${stepper}
+    <div class="mini">${k.dropped ? `<span class="chip" style="color:var(--muted)">已放弃</span>` : bar(k.progress) + `<span class="num">${pct(k.progress)}</span>`}</div>
+    <div class="ops">
+      <button class="icon" data-act="editKr" title="编辑">✎</button>
+      <button class="icon" data-act="drop" title="${k.dropped ? "恢复" : "本季度放弃（不计入进度）"}">${k.dropped ? "↺" : "⏸"}</button>
+      <button class="icon" data-act="delKr" title="删除">🗑</button>
+    </div>
+  </div>`;
+}
+
+// ---------- 对话框
+
+function openKrDialog(title, kr, onSave) {
+  const dlg = $("#krDlg"), f = $("#krForm");
+  $("#krDlgTitle").textContent = title;
+  f.elements.title.value = kr?.title || "";
+  const numeric = kr ? kr.target != null : true;
+  f.elements.kind.value = numeric ? "num" : "check";
+  f.elements.current.value = fmt(kr?.current ?? 0);
+  f.elements.target.value = fmt(kr?.target);
+  f.elements.unit.value = kr?.unit || "";
+  syncKind();
+  f.onsubmit = (e) => {
+    e.preventDefault();
+    const isNum = f.elements.kind.value === "num";
+    if (isNum && !(Number(f.elements.target.value) > 0)) { f.elements.target.focus(); return toast("数值型 KR 需要填一个大于 0 的目标值", true); }
+    dlg.close();
+    onSave({
+      title: f.elements.title.value,
+      checked: kr?.checked || false,
+      dropped: kr?.dropped || false,
+      current: isNum ? Number(f.elements.current.value || 0) : null,
+      target: isNum ? Number(f.elements.target.value) : null,
+      unit: isNum ? f.elements.unit.value : "",
+    });
+  };
+  dlg.showModal();
+  f.elements.title.focus();
+}
+function syncKind() {
+  $("#numFields").style.display = $("#krForm").elements.kind.value === "num" ? "" : "none";
+}
+document.querySelectorAll("#krForm input[name=kind]").forEach((r) => r.addEventListener("change", syncKind));
+
+function openObjDialog(title, obj, onSave) {
+  const dlg = $("#objDlg"), f = $("#objForm");
+  $("#objDlgTitle").textContent = title;
+  f.elements.title.value = obj?.title || "";
+  f.elements.domain.value = obj?.domain || "";
+  f.onsubmit = (e) => {
+    e.preventDefault();
+    dlg.close();
+    onSave({ title: f.elements.title.value, domain: f.elements.domain.value });
+  };
+  dlg.showModal();
+  f.elements.title.focus();
+}
+document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
+
+// ---------- 交互
+
+const krPayload = (k, patch) => ({ title: k.title, checked: k.checked, dropped: k.dropped, current: k.current, target: k.target, unit: k.unit, ...patch });
+const saveKr = (k, patch) => post("/api/kr/save", { line: k.line, expect: k.raw, kr: krPayload(k, patch) });
+
+function addObjective() {
+  openObjDialog("新目标", null, (d) => post("/api/objective/add", d));
+}
+
+async function createFile(kind, date) {
+  const r = await post("/api/create", { kind, date });
+  if (r) {
+    if (kind === "quarter") { selected = r.path.match(/(\d{4}-Q\d)/)[1]; await load(); }
+    toast(`${r.created ? "已创建" : "已存在"}：${esc(r.path)} <a href="${obsidian(r.abs)}">在 Obsidian 打开</a>`);
+  }
+}
+
+$("#app").addEventListener("click", (e) => {
+  const createBtn = e.target.closest("[data-create]");
+  if (createBtn) return createFile(createBtn.dataset.create, createBtn.dataset.date || S.today);
+  const btn = e.target.closest("[data-act]");
+  if (!btn || btn.dataset.act === "set") return;
+  const act = btn.dataset.act;
+  if (act === "addObj") return addObjective();
+  const o = S.quarter.objectives[btn.closest("[data-o]").dataset.o];
+  const kEl = btn.closest("[data-k]");
+  const k = kEl ? o.krs[kEl.dataset.k] : null;
+  switch (act) {
+    case "toggle": return saveKr(k, { checked: btn.checked });
+    case "inc": return saveKr(k, { current: (k.current || 0) + 1 });
+    case "dec": return saveKr(k, { current: Math.max((k.current || 0) - 1, 0) });
+    case "drop": return saveKr(k, { dropped: !k.dropped, checked: false });
+    case "editKr": return openKrDialog("编辑 KR", k, (kr) => post("/api/kr/save", { line: k.line, expect: k.raw, kr }));
+    case "delKr":
+      if (confirm(`删除这个 KR？\n\n${k.title}`)) post("/api/kr/delete", { line: k.line, expect: k.raw });
+      return;
+    case "addKr": return openKrDialog("添加 KR", null, (kr) => post("/api/kr/add", { line: o.line, expect: o.raw, kr }));
+    case "editObj": return openObjDialog("编辑目标", o, (d) => post("/api/objective/save", { line: o.line, expect: o.raw, ...d }));
+    case "delObj":
+      if (confirm(`删除整个目标和它下面的 ${o.krs.length} 个 KR？\n\n${o.title}`)) post("/api/objective/delete", { line: o.line, expect: o.raw });
+      return;
+  }
+});
+
+$("#app").addEventListener("change", (e) => {
+  if (e.target.dataset.act !== "set") return;
+  const o = S.quarter.objectives[e.target.closest("[data-o]").dataset.o];
+  const k = o.krs[e.target.closest("[data-k]").dataset.k];
+  const v = Number(e.target.value);
+  if (!(v >= 0)) return load();
+  saveKr(k, { current: v });
+});
+
+$("#quarterSel").addEventListener("change", (e) => { selected = e.target.value; load(); });
+$("#addObjBtn").addEventListener("click", addObjective);
+$("#reloadBtn").addEventListener("click", () => load().then(() => toast("已重新读取文件")));
+// 从 Obsidian 切回来时自动重新读取
+window.addEventListener("focus", () => { if (!document.querySelector("dialog[open]")) load(); });
+
+load();
+</script>
+</body>
+</html>
