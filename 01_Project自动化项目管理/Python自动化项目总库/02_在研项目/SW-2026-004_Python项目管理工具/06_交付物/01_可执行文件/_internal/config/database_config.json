@@ -1,8 +1,0 @@
-{
-    "db_type": "sqlite",
-    "db_path": "data/project_manager.db",
-    "echo": false,
-    "pool_size": 5,
-    "max_overflow": 10,
-    "auto_migrate": true
-}

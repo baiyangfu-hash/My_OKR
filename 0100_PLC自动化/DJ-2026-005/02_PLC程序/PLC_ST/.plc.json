@@ -1,8 +1,0 @@
-{
-  "name": "DJ-2026-005",
-  "description": "边框缓存机 PLC 控制系统",
-  "version": "V7.1.1",
-  "libraries": [
-    "../../../01_SharedLibraries/SysLib"
-  ]
-}

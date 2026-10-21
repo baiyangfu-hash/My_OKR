@@ -1,8 +1,0 @@
-{
-  "name": "DJ-2026-097",
-  "description": "测试test-suite模板",
-  "version": "V1.0.0",
-  "libraries": [
-    "../01_SharedLibraries/SysLib"
-  ]
-}

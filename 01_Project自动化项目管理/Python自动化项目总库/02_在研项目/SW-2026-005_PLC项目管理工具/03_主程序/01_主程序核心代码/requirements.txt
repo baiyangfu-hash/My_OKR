@@ -1,3 +1,0 @@
-# PLC项目管理工具 V9.0.0 运行时依赖
-# Phase 1a: 仅标准库，无第三方依赖
-# Phase 1b: 添加 pywebview>=5.0

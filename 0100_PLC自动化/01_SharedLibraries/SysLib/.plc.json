@@ -1,4 +1,0 @@
-{"name": "SysLib", 
-"description": "PLC共享函数库 - 定时器、计数器、边沿检测、时间转换等基础功能块", 
-"version": "1.0.0",
- "libraries": []}
