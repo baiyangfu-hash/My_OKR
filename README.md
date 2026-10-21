@@ -89,8 +89,8 @@ python -m unittest discover -s tests
 
 ## 旧内容
 
-清空前的仓库内容保存在 tag `archive/pre-okr-reset` 中：
+清空前的仓库内容保存在 tag `v0.9.0`（提交 e9c6dd0）中：
 
 ```bash
-git checkout archive/pre-okr-reset -- <需要找回的路径>
+git checkout v0.9.0 -- <需要找回的路径>
 ```
