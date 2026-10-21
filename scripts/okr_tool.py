@@ -26,7 +26,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 OKR_DIR = ROOT / "okr"
@@ -53,6 +53,8 @@ class KeyResult:
     current: Optional[float] = None
     target: Optional[float] = None
     unit: str = ""
+    line: int = -1  # 在文件中的行号（从 0 开始），供界面修改时定位
+    raw: str = ""
 
     @property
     def progress(self) -> float:
@@ -76,6 +78,9 @@ class Objective:
     title: str
     tags: List[str] = field(default_factory=list)
     krs: List[KeyResult] = field(default_factory=list)
+    line: int = -1
+    end_line: int = -1  # 下一个标题所在行（不含）
+    raw: str = ""
 
     @property
     def active_krs(self) -> List[KeyResult]:
@@ -150,12 +155,29 @@ def parse_kr(mark: str, text: str) -> KeyResult:
     return kr
 
 
+def format_kr(kr: KeyResult, prefix: str = "- ") -> str:
+    """把 KR 写回成一行 Markdown 任务。"""
+    mark = "x" if kr.checked else "-" if kr.dropped else " "
+    text = kr.title
+    if kr.target is not None:
+        value = f"{_num(kr.current or 0)}/{_num(kr.target)}"
+        if kr.unit:
+            value += f" {kr.unit}"
+        text += f" `{value}`"
+    return f"{prefix}[{mark}] {text}"
+
+
+def format_objective_heading(title: str, tags: List[str]) -> str:
+    return " ".join(["##", title] + [f"#{t}" for t in tags])
+
+
 def parse_okr_text(text: str) -> List[Objective]:
     objectives: List[Objective] = []
     current: Optional[Objective] = None
     in_frontmatter = False
     in_code = False
-    for i, line in enumerate(text.splitlines()):
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
         if i == 0 and line.strip() == "---":
             in_frontmatter = True
             continue
@@ -169,28 +191,34 @@ def parse_okr_text(text: str) -> List[Objective]:
         if in_code:
             continue
         m = OBJECTIVE_RE.match(line)
+        if m or line.startswith("# "):
+            if current is not None:
+                current.end_line = i
+            current = None
         if m:
             current = parse_objective_heading(m.group(1))
+            current.line, current.raw = i, line
             objectives.append(current)
-            continue
-        if line.startswith("# "):
-            current = None
             continue
         m = KR_RE.match(line)
         if m and current is not None:
-            current.krs.append(parse_kr(m.group(1), m.group(2)))
-    # 没有任何 KR 的二级标题（如“备注”）不算目标
-    return [o for o in objectives if o.krs]
+            kr = parse_kr(m.group(1), m.group(2))
+            kr.line, kr.raw = i, line
+            current.krs.append(kr)
+    if current is not None:
+        current.end_line = len(lines)
+    # 既没有 KR 也没有标签的二级标题（如“备注”）不算目标
+    return [o for o in objectives if o.krs or o.tags]
 
 
-def load_quarters(okr_dir: Path = OKR_DIR) -> List[Quarter]:
+def load_quarters(okr_dir: Optional[Path] = None) -> List[Quarter]:
     quarters = []
-    for path in sorted(okr_dir.glob("*/*.md")):
+    for path in sorted((okr_dir or OKR_DIR).glob("*/*.md")):
         m = QUARTER_FILE_RE.match(path.name)
         if not m:
             continue
         q = Quarter(int(m.group(1)), int(m.group(2)), path)
-        q.objectives = parse_okr_text(path.read_text(encoding="utf-8"))
+        q.objectives = parse_okr_text(path.read_text(encoding="utf-8-sig"))
         quarters.append(q)
     return sorted(quarters, key=lambda x: (x.year, x.q))
 
@@ -279,6 +307,8 @@ def render_dashboard(quarters: List[Quarter], today: dt.date) -> str:
             "| KR | 数值 | 进度 |",
             "|---|---|---|",
         ]
+        if not o.krs:
+            lines.append("| （还没有 KR） | | |")
         for kr in o.krs:
             if kr.dropped:
                 lines.append(f"| ~~{kr.title}~~ | 已放弃 | — |")
@@ -316,7 +346,7 @@ def quarter_of(day: dt.date) -> int:
 
 
 def fill_template(name: str, values: Dict[str, str]) -> str:
-    text = (TEMPLATE_DIR / name).read_text(encoding="utf-8")
+    text = (TEMPLATE_DIR / name).read_text(encoding="utf-8-sig")
     for key, val in values.items():
         text = text.replace("{{" + key + "}}", val)
     return text
@@ -343,47 +373,45 @@ def kr_snapshot(quarter: Optional[Quarter]) -> str:
     return "\n".join(out)
 
 
-def cmd_dashboard(today: dt.date) -> int:
+def find_quarter(today: dt.date) -> Optional[Quarter]:
+    q = quarter_of(today)
+    return next((x for x in load_quarters() if x.year == today.year and x.q == q), None)
+
+
+def write_dashboard(today: dt.date) -> Path:
     DASHBOARD.write_text(render_dashboard(load_quarters(), today), encoding="utf-8")
-    print(f"已生成：{rel(DASHBOARD)}")
-    return 0
+    return DASHBOARD
 
 
-def cmd_week(today: dt.date) -> int:
+# 以下 plan_* 只算出“文件路径 + 内容”，由调用方决定是否写入
+
+
+def plan_week(today: dt.date) -> Tuple[Path, str]:
     iso_year, week, _ = today.isocalendar()
     monday = today - dt.timedelta(days=today.weekday())
     sunday = monday + dt.timedelta(days=6)
-    q = quarter_of(today)
-    current = next(
-        (x for x in load_quarters() if x.year == today.year and x.q == q), None
-    )
     content = fill_template(
         "周报.md",
         {
             "week": f"{iso_year}-W{week:02d}",
             "start": monday.isoformat(),
             "end": sunday.isoformat(),
-            "quarter": f"{today.year}-Q{q}",
-            "snapshot": kr_snapshot(current),
+            "quarter": f"{today.year}-Q{quarter_of(today)}",
+            "snapshot": kr_snapshot(find_quarter(today)),
         },
     )
-    path = OKR_DIR / str(today.year) / "weekly" / f"{iso_year}-W{week:02d}.md"
-    return write_new(path, content)
+    return OKR_DIR / str(today.year) / "weekly" / f"{iso_year}-W{week:02d}.md", content
 
 
-def cmd_quarter(today: dt.date) -> int:
-    q = quarter_of(today)
-    name = f"{today.year}-Q{q}"
+def plan_quarter(today: dt.date) -> Tuple[Path, str]:
+    name = f"{today.year}-Q{quarter_of(today)}"
     content = fill_template("季度OKR.md", {"quarter": name, "year": str(today.year)})
-    return write_new(OKR_DIR / str(today.year) / f"{name}.md", content)
+    return OKR_DIR / str(today.year) / f"{name}.md", content
 
 
-def cmd_review(today: dt.date) -> int:
-    q = quarter_of(today)
-    name = f"{today.year}-Q{q}"
-    current = next(
-        (x for x in load_quarters() if x.year == today.year and x.q == q), None
-    )
+def plan_review(today: dt.date) -> Tuple[Path, str]:
+    name = f"{today.year}-Q{quarter_of(today)}"
+    current = find_quarter(today)
     content = fill_template(
         "季度复盘.md",
         {
@@ -392,22 +420,36 @@ def cmd_review(today: dt.date) -> int:
             "snapshot": kr_snapshot(current),
         },
     )
-    return write_new(OKR_DIR / str(today.year) / f"{name}-复盘.md", content)
+    return OKR_DIR / str(today.year) / f"{name}-复盘.md", content
 
 
-def cmd_year(today: dt.date) -> int:
+def plan_year(today: dt.date) -> Tuple[Path, str]:
     year = str(today.year)
     content = fill_template("年度目标.md", {"year": year})
-    return write_new(OKR_DIR / year / f"{year}-年度目标.md", content)
+    return OKR_DIR / year / f"{year}-年度目标.md", content
 
 
-COMMANDS = {
-    "dashboard": cmd_dashboard,
-    "week": cmd_week,
-    "quarter": cmd_quarter,
-    "review": cmd_review,
-    "year": cmd_year,
+PLANS = {
+    "week": plan_week,
+    "quarter": plan_quarter,
+    "review": plan_review,
+    "year": plan_year,
 }
+
+
+def cmd_dashboard(today: dt.date) -> int:
+    print(f"已生成：{rel(write_dashboard(today))}")
+    return 0
+
+
+def _plan_cmd(plan):
+    def cmd(today: dt.date) -> int:
+        return write_new(*plan(today))
+
+    return cmd
+
+
+COMMANDS = {"dashboard": cmd_dashboard, **{n: _plan_cmd(p) for n, p in PLANS.items()}}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
