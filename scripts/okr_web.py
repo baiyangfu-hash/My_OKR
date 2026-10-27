@@ -15,10 +15,12 @@ import argparse
 import datetime as dt
 import json
 import re
+import sqlite3
 import sys
 import threading
 import webbrowser
 from http import HTTPStatus
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -26,6 +28,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import okr_db  # noqa: E402
 import okr_tool as okr  # noqa: E402
 
 HOST = "127.0.0.1"
@@ -148,8 +151,11 @@ def save_kr(lines: List[str], line: int, expect: str, data: Dict[str, Any]) -> L
     check_line(lines, line, expect)
     m = LIST_PREFIX_RE.match(lines[line])
     prefix = m.group(1) if m else "- "
+    kr = kr_from_payload(data)
+    old_id = okr.BLOCK_ID_RE.search(lines[line])
+    kr.id = old_id.group(1) if old_id else ""  # 保留块 ID，历史记录才连得上
     lines = list(lines)
-    lines[line] = okr.format_kr(kr_from_payload(data), prefix)
+    lines[line] = okr.format_kr(kr, prefix)
     return lines
 
 
@@ -216,8 +222,12 @@ def file_info(path: Path) -> Dict[str, Any]:
     return {"path": okr.rel(path), "abs": str(path), "exists": path.exists()}
 
 
-def kr_json(kr: okr.KeyResult) -> Dict[str, Any]:
+def kr_json(kr: okr.KeyResult, rows: List[Any], q: okr.Quarter, today: dt.date) -> Dict[str, Any]:
     return {
+        "id": kr.id,
+        # 迷你趋势：最近 20 条记录的进度
+        "spark": [r["progress"] for r in rows[-20:]],
+        "forecast": okr_db.forecast(rows, q, today),
         "line": kr.line,
         "raw": kr.raw,
         "title": kr.title,
@@ -230,8 +240,10 @@ def kr_json(kr: okr.KeyResult) -> Dict[str, Any]:
     }
 
 
-def quarter_json(q: okr.Quarter, today: dt.date) -> Dict[str, Any]:
+def quarter_json(q: okr.Quarter, today: dt.date, conn: Any) -> Dict[str, Any]:
     tp = q.time_progress(today)
+    data = okr_db.measurements(conn, [kr.id for o in q.objectives for kr in o.krs if kr.id])
+    week = okr_db.changes_since(conn, q, okr_db.week_start(today)) if q.start <= today <= q.end else []
     return {
         "name": q.name,
         "file": file_info(q.path),
@@ -245,6 +257,8 @@ def quarter_json(q: okr.Quarter, today: dt.date) -> Dict[str, Any]:
             {"name": k, "progress": v, "status": okr.status(v, tp)}
             for k, v in sorted(okr.domain_progress(q.objectives).items(), key=lambda kv: -kv[1])
         ],
+        "series": okr_db.quarter_series(conn, q, today),
+        "week_changes": [dict(c, text=okr_db.describe_change(c)) for c in week],
         "objectives": [
             {
                 "line": o.line,
@@ -254,7 +268,7 @@ def quarter_json(q: okr.Quarter, today: dt.date) -> Dict[str, Any]:
                 "tags": o.tags,
                 "progress": o.progress,
                 "status": okr.status(o.progress, tp) if o.active_krs else "",
-                "krs": [kr_json(kr) for kr in o.krs],
+                "krs": [kr_json(kr, data.get(kr.id, []), q, today) for kr in o.krs],
             }
             for o in q.objectives
         ],
@@ -266,7 +280,7 @@ def next_quarter_start(today: dt.date) -> dt.date:
     return dt.date(today.year + 1, 1, 1) if q == 4 else dt.date(today.year, 3 * q + 1, 1)
 
 
-def build_state(today: dt.date, selected: Optional[str]) -> Dict[str, Any]:
+def build_state(today: dt.date, selected: Optional[str], conn: Any) -> Dict[str, Any]:
     quarters = okr.load_quarters()
     this_name = f"{today.year}-Q{okr.quarter_of(today)}"
     names = [q.name for q in quarters]
@@ -279,10 +293,21 @@ def build_state(today: dt.date, selected: Optional[str]) -> Dict[str, Any]:
         "this_quarter": this_name,
         "next_quarter": {"name": f"{nxt.year}-Q{okr.quarter_of(nxt)}", "date": nxt.isoformat()},
         "quarters": [{"name": q.name, "progress": q.progress} for q in reversed(quarters)],
-        "quarter": quarter_json(chosen, today) if chosen else None,
-        "files": {kind: file_info(plan(today)[0]) for kind, plan in okr.PLANS.items()},
+        "quarter": quarter_json(chosen, today, conn) if chosen else None,
+        "files": {kind: file_info(path(today)) for kind, path in okr.PATHS.items()},
         "dashboard": file_info(okr.DASHBOARD),
     }
+
+
+def kr_history(conn: Any, kr_id: str) -> Dict[str, Any]:
+    kr = conn.execute("SELECT * FROM kr WHERE id = ?", (kr_id,)).fetchone()
+    if kr is None:
+        raise ApiError("找不到这个 KR 的历史记录", HTTPStatus.NOT_FOUND)
+    rows = conn.execute(
+        "SELECT ts, current, target, checked, dropped, progress, source FROM measurement"
+        " WHERE kr_id = ? ORDER BY ts, id", (kr_id,)
+    ).fetchall()
+    return {"kr": dict(kr), "rows": [dict(r) for r in rows]}
 
 
 def create_file(kind: str, date: Optional[str]) -> Dict[str, Any]:
@@ -330,14 +355,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._send(HTTPStatus.FORBIDDEN, b"forbidden", "text/plain")
         url = urlparse(self.path)
+        query = parse_qs(url.query)
         if url.path in ("/", "/index.html"):
             return self._send(HTTPStatus.OK, INDEX_HTML.read_bytes(), "text/html; charset=utf-8")
-        if url.path == "/api/state":
-            quarter = parse_qs(url.query).get("quarter", [None])[0]
-            try:
-                return self._json(build_state(dt.date.today(), quarter))
-            except Exception as e:  # 文件格式问题等，交给页面显示
-                return self._json({"error": f"读取失败：{e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+        try:
+            if url.path == "/api/state":
+                with _write_lock, closing(okr_db.connect()) as conn:
+                    okr_db.sync(conn, "file")  # 收进 Obsidian 里的改动
+                    return self._json(build_state(dt.date.today(), query.get("quarter", [None])[0], conn))
+            if url.path == "/api/history":
+                with closing(okr_db.connect()) as conn:
+                    return self._json(kr_history(conn, query.get("id", [""])[0]))
+        except ApiError as e:
+            return self._json({"error": str(e)}, e.status)
+        except Exception as e:  # 文件格式、数据库等问题，交给页面显示
+            return self._json({"error": f"读取失败：{e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
         self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain")
 
     def do_POST(self) -> None:  # noqa: N802
@@ -348,13 +380,20 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
             data = json.loads(self.rfile.read(length) or b"{}")
             with _write_lock:
-                result = self._handle(urlparse(self.path).path, data)
+                with closing(okr_db.connect()) as conn:
+                    # 先按“文件”收掉别处的改动，再改，最后按“界面”记录这次修改，
+                    # 这样 Obsidian 里的改动不会被误记成界面操作
+                    okr_db.sync(conn, "file")
+                    result = self._handle(urlparse(self.path).path, data)
+                    okr_db.sync(conn, "gui")
                 okr.write_dashboard(dt.date.today())
             self._json({"ok": True, **result})
         except ApiError as e:
             self._json({"error": str(e)}, e.status)
         except (KeyError, TypeError, ValueError) as e:
             self._json({"error": f"请求参数不对：{e}"}, HTTPStatus.BAD_REQUEST)
+        except sqlite3.Error as e:
+            self._json({"error": f"历史数据库出错：{e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _handle(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
         if path == "/api/create":

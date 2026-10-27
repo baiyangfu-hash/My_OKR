@@ -9,3 +9,8 @@ __pycache__/
 
 .DS_Store
 Thumbs.db
+
+# SQLite 临时文件（数据库本身 data/okr.db 要提交）
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
