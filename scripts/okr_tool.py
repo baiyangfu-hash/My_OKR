@@ -9,6 +9,9 @@
     python scripts/okr_tool.py quarter            # 新建本季度 OKR 文件
     python scripts/okr_tool.py review             # 新建本季度复盘
     python scripts/okr_tool.py year               # 新建本年度目标
+    python scripts/okr_tool.py sync               # 把当前进度同步进历史数据库
+    python scripts/okr_tool.py history [关键词]   # 查看 KR 的历史记录
+    python scripts/okr_tool.py sql "SELECT ..."   # 只读执行 SQL
 
 KR 写法（在季度 OKR 文件中）：
     ## O1 目标标题 #工作
@@ -32,10 +35,12 @@ ROOT = Path(__file__).resolve().parent.parent
 OKR_DIR = ROOT / "okr"
 TEMPLATE_DIR = ROOT / "templates"
 DASHBOARD = ROOT / "dashboard.md"
+DB_PATH = ROOT / "data" / "okr.db"
 
 QUARTER_FILE_RE = re.compile(r"^(\d{4})-Q([1-4])\.md$")
 OBJECTIVE_RE = re.compile(r"^##\s+(.+?)\s*$")
 KR_RE = re.compile(r"^\s*[-*]\s+\[( |x|X|-)\]\s+(.+?)\s*$")
+BLOCK_ID_RE = re.compile(r"\s+\^([A-Za-z0-9-]+)\s*$")  # Obsidian 块 ID，如 ^kr-3fa9c1
 VALUE_RE = re.compile(r"`\s*(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*([^`]*?)\s*`")
 TAG_RE = re.compile(r"(?:^|\s)#([^\s#]+)")
 
@@ -53,6 +58,7 @@ class KeyResult:
     current: Optional[float] = None
     target: Optional[float] = None
     unit: str = ""
+    id: str = ""  # 行尾的块 ID，用来在数据库里跨编辑识别同一个 KR
     line: int = -1  # 在文件中的行号（从 0 开始），供界面修改时定位
     raw: str = ""
 
@@ -146,6 +152,10 @@ def parse_objective_heading(text: str) -> Objective:
 
 def parse_kr(mark: str, text: str) -> KeyResult:
     kr = KeyResult(title=text, checked=mark in "xX", dropped=mark == "-")
+    m = BLOCK_ID_RE.search(text)
+    if m:
+        kr.id = m.group(1)
+        text = kr.title = text[: m.start()]
     m = VALUE_RE.search(text)
     if m:
         kr.current, kr.target = float(m.group(1)), float(m.group(2))
@@ -164,6 +174,8 @@ def format_kr(kr: KeyResult, prefix: str = "- ") -> str:
         if kr.unit:
             value += f" {kr.unit}"
         text += f" `{value}`"
+    if kr.id:
+        text += f" ^{kr.id}"
     return f"{prefix}[{mark}] {text}"
 
 
@@ -262,7 +274,7 @@ def rel(path: Path) -> str:
         return path.as_posix()
 
 
-def render_dashboard(quarters: List[Quarter], today: dt.date) -> str:
+def render_dashboard(quarters: List[Quarter], today: dt.date, week_changes: Optional[str] = None) -> str:
     lines = [
         "# 📊 OKR 仪表盘",
         "",
@@ -295,6 +307,9 @@ def render_dashboard(quarters: List[Quarter], today: dt.date) -> str:
         for name, p in sorted(domains.items(), key=lambda kv: -kv[1]):
             lines.append(f"| #{name} | `{bar(p)}` {pct(p)} | {status(p, tp)} |")
         lines.append("")
+
+    if week_changes:
+        lines += ["### 📈 本周进展", "", week_changes, ""]
 
     lines += ["### 目标明细", ""]
     for o in cur.objectives:
@@ -379,86 +394,127 @@ def find_quarter(today: dt.date) -> Optional[Quarter]:
 
 
 def write_dashboard(today: dt.date) -> Path:
-    DASHBOARD.write_text(render_dashboard(load_quarters(), today), encoding="utf-8")
+    import okr_db  # 延迟导入：okr_db 依赖本模块
+
+    quarters = load_quarters()
+    current = next((q for q in quarters if q.start <= today <= q.end), None)
+    week = okr_db.safe_changes(current, lambda q: okr_db.week_start(today)) if current else None
+    DASHBOARD.write_text(render_dashboard(load_quarters(), today, week), encoding="utf-8")
     return DASHBOARD
 
 
-# 以下 plan_* 只算出“文件路径 + 内容”，由调用方决定是否写入
+# *_path 只算文件路径；plan_* 再算出内容，由调用方决定是否写入
+
+
+def week_path(today: dt.date) -> Path:
+    iso_year, week, _ = today.isocalendar()
+    return OKR_DIR / str(today.year) / "weekly" / f"{iso_year}-W{week:02d}.md"
+
+
+def quarter_path(today: dt.date) -> Path:
+    return OKR_DIR / str(today.year) / f"{today.year}-Q{quarter_of(today)}.md"
+
+
+def review_path(today: dt.date) -> Path:
+    return OKR_DIR / str(today.year) / f"{today.year}-Q{quarter_of(today)}-复盘.md"
+
+
+def year_path(today: dt.date) -> Path:
+    return OKR_DIR / str(today.year) / f"{today.year}-年度目标.md"
 
 
 def plan_week(today: dt.date) -> Tuple[Path, str]:
+    import okr_db
+
     iso_year, week, _ = today.isocalendar()
     monday = today - dt.timedelta(days=today.weekday())
-    sunday = monday + dt.timedelta(days=6)
+    current = find_quarter(today)
+    changes = okr_db.safe_changes(current, lambda q: okr_db.week_start(today))
     content = fill_template(
         "周报.md",
         {
             "week": f"{iso_year}-W{week:02d}",
             "start": monday.isoformat(),
-            "end": sunday.isoformat(),
+            "end": (monday + dt.timedelta(days=6)).isoformat(),
             "quarter": f"{today.year}-Q{quarter_of(today)}",
+            "changes": changes,
             "snapshot": kr_snapshot(find_quarter(today)),
         },
     )
-    return OKR_DIR / str(today.year) / "weekly" / f"{iso_year}-W{week:02d}.md", content
+    return week_path(today), content
 
 
 def plan_quarter(today: dt.date) -> Tuple[Path, str]:
     name = f"{today.year}-Q{quarter_of(today)}"
     content = fill_template("季度OKR.md", {"quarter": name, "year": str(today.year)})
-    return OKR_DIR / str(today.year) / f"{name}.md", content
+    return quarter_path(today), content
 
 
 def plan_review(today: dt.date) -> Tuple[Path, str]:
-    name = f"{today.year}-Q{quarter_of(today)}"
+    import okr_db
+
     current = find_quarter(today)
+    changes = okr_db.safe_changes(current, okr_db.quarter_start)
+    current = find_quarter(today)  # 同步可能补了 ID，重新读取
     content = fill_template(
         "季度复盘.md",
         {
-            "quarter": name,
+            "quarter": f"{today.year}-Q{quarter_of(today)}",
             "score": pct(current.progress) if current else "—",
+            "changes": changes,
             "snapshot": kr_snapshot(current),
         },
     )
-    return OKR_DIR / str(today.year) / f"{name}-复盘.md", content
+    return review_path(today), content
 
 
 def plan_year(today: dt.date) -> Tuple[Path, str]:
-    year = str(today.year)
-    content = fill_template("年度目标.md", {"year": year})
-    return OKR_DIR / year / f"{year}-年度目标.md", content
+    content = fill_template("年度目标.md", {"year": str(today.year)})
+    return year_path(today), content
 
 
-PLANS = {
-    "week": plan_week,
-    "quarter": plan_quarter,
-    "review": plan_review,
-    "year": plan_year,
-}
+PATHS = {"week": week_path, "quarter": quarter_path, "review": review_path, "year": year_path}
+PLANS = {"week": plan_week, "quarter": plan_quarter, "review": plan_review, "year": plan_year}
 
 
-def cmd_dashboard(today: dt.date) -> int:
+def cmd_dashboard(today: dt.date, args: List[str]) -> int:
     print(f"已生成：{rel(write_dashboard(today))}")
     return 0
 
 
 def _plan_cmd(plan):
-    def cmd(today: dt.date) -> int:
+    def cmd(today: dt.date, args: List[str]) -> int:
         return write_new(*plan(today))
 
     return cmd
 
 
-COMMANDS = {"dashboard": cmd_dashboard, **{n: _plan_cmd(p) for n, p in PLANS.items()}}
+def _db_cmd(name: str):
+    def cmd(today: dt.date, args: List[str]) -> int:
+        import okr_db
+
+        return getattr(okr_db, name)(today, args)
+
+    return cmd
+
+
+COMMANDS = {
+    "dashboard": cmd_dashboard,
+    **{n: _plan_cmd(p) for n, p in PLANS.items()},
+    "sync": _db_cmd("cmd_sync"),
+    "history": _db_cmd("cmd_history"),
+    "sql": _db_cmd("cmd_sql"),
+}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="个人 OKR 工具")
     parser.add_argument("command", choices=COMMANDS, help="要执行的命令")
+    parser.add_argument("args", nargs="*", help="history 的关键词 / sql 的语句")
     parser.add_argument("--date", help="指定日期 YYYY-MM-DD（默认今天）")
     args = parser.parse_args(argv)
     today = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
-    return COMMANDS[args.command](today)
+    return COMMANDS[args.command](today, args.args)
 
 
 if __name__ == "__main__":

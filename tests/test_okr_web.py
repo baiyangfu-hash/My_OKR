@@ -1,17 +1,14 @@
 import json
-import sys
-import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+from helpers import TempRepoMixin
 
-import okr_tool  # noqa: E402
-import okr_web  # noqa: E402
+import okr_tool
+import okr_web
 
 SAMPLE = """---
 type: 季度OKR
@@ -73,6 +70,11 @@ class EditTest(unittest.TestCase):
             with self.assertRaises(okr_web.ApiError, msg=bad):
                 okr_web.save_kr(self.lines, kr.line, kr.raw, bad)
 
+    def test_save_kr_keeps_block_id(self):
+        lines = ["## O1 a #工作", "- [ ] KR1 跑步 `9/36 次` ^kr-abc123"]
+        out = okr_web.save_kr(lines, 1, lines[1], {"title": "KR1 慢跑", "current": 10, "target": 36, "unit": "次"})
+        self.assertEqual(out[1], "- [ ] KR1 慢跑 `10/36 次` ^kr-abc123")
+
     def test_add_kr_auto_numbers(self):
         out = okr_web.add_kr(self.lines, self.o1.line, self.o1.raw, {"title": "模板库", "target": 20})
         o1 = objs(out)[0]
@@ -109,17 +111,12 @@ class EditTest(unittest.TestCase):
         self.assertEqual(len(objs(out)[0].krs), 1)
 
 
-class ServerTest(unittest.TestCase):
+class ServerTest(TempRepoMixin, unittest.TestCase):
     """真正起一个 HTTP 服务，走一遍界面会用到的接口。"""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        root = Path(self.tmp.name)
-        (root / "okr" / "2026").mkdir(parents=True)
-        self.qfile = root / "okr" / "2026" / "2026-Q4.md"
-        self.qfile.write_text(SAMPLE, encoding="utf-8")
-        self.saved = (okr_tool.ROOT, okr_tool.OKR_DIR, okr_tool.DASHBOARD)
-        okr_tool.ROOT, okr_tool.OKR_DIR, okr_tool.DASHBOARD = root, root / "okr", root / "dashboard.md"
+        super().setUp()
+        self.qfile = self.write_quarter("2026-Q4", SAMPLE)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), okr_web.Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -127,8 +124,7 @@ class ServerTest(unittest.TestCase):
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
-        okr_tool.ROOT, okr_tool.OKR_DIR, okr_tool.DASHBOARD = self.saved
-        self.tmp.cleanup()
+        super().tearDown()
 
     def request(self, path, body=None, headers=None):
         hdrs = {"Content-Type": "application/json", "X-OKR": "1"} if body is not None else {}
@@ -162,12 +158,42 @@ class ServerTest(unittest.TestCase):
                                                   "expect": kr["raw"], "kr": payload})
         self.assertEqual(status, 200)
         self.assertIn("- [ ] KR1 项目 `3/4 个`", self.qfile.read_text(encoding="utf-8"))
-        self.assertTrue((Path(self.tmp.name) / "dashboard.md").exists())
+        self.assertTrue((self.root / "dashboard.md").exists())
         # 用旧的行内容再改一次，应被拒绝
         status, body = self.request("/api/kr/save", {"quarter": "2026-Q4", "line": kr["line"],
                                                      "expect": kr["raw"], "kr": payload})
         self.assertEqual(status, 409)
         self.assertIn("刷新", json.loads(body)["error"])
+
+    def test_history_is_recorded_and_exposed(self):
+        q = self.state()["quarter"]
+        kr = q["objectives"][0]["krs"][0]
+        self.assertTrue(kr["id"].startswith("kr-"))
+        self.assertEqual(len(kr["spark"]), 1)
+        self.assertIsNotNone(kr["forecast"])  # 数值型且未完成
+        self.assertTrue(q["series"])
+        self.request("/api/kr/save", {"quarter": "2026-Q4", "line": kr["line"], "expect": kr["raw"],
+                                      "kr": dict(kr, current=3)})
+        status, body = self.request(f"/api/history?id={kr['id']}")
+        self.assertEqual(status, 200)
+        rows = json.loads(body)["rows"]
+        self.assertEqual([(r["current"], r["source"]) for r in rows], [(2.0, "file"), (3.0, "gui")])
+        q = self.state()["quarter"]
+        self.assertEqual(q["objectives"][0]["krs"][0]["spark"], [0.5, 0.75])
+        self.assertEqual([c["text"] for c in q["week_changes"]], ["KR1 项目：2 → 3/4 个（+1）"])
+        status, _ = self.request("/api/history?id=kr-nothere")
+        self.assertEqual(status, 404)
+
+    def test_obsidian_edit_before_gui_edit_is_not_labelled_gui(self):
+        kr = self.state()["quarter"]["objectives"][1]["krs"][0]
+        # 用户在 Obsidian 里改了跑步，界面还没刷新就去改了 O1 的 KR
+        text = self.qfile.read_text(encoding="utf-8").replace("`9/36`", "`12/36`")
+        self.qfile.write_text(text, encoding="utf-8")
+        other = [l for l in text.splitlines() if "KR2 证书" in l][0]
+        self.request("/api/kr/save", {"quarter": "2026-Q4", "line": text.splitlines().index(other),
+                                      "expect": other, "kr": {"title": "KR2 证书", "checked": True}})
+        status, body = self.request(f"/api/history?id={kr['id']}")
+        self.assertEqual([r["source"] for r in json.loads(body)["rows"]], ["file", "file"])
 
     def test_post_requires_header_and_local_host(self):
         body = {"quarter": "2026-Q4", "title": "x", "domain": "工作"}

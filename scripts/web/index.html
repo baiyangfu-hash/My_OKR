@@ -116,6 +116,50 @@ dialog label > input:not([type=radio]) { color: var(--text); font-size: 15px; wi
 .toast a { color: inherit; font-weight: 600; }
 .toast.err { background: var(--red); color: #fff; }
 .foot { color: var(--muted); font-size: 13px; margin-top: 24px; text-align: center; }
+.trend { padding: 14px 18px 12px; margin-bottom: 16px; }
+.trend-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.trend-head h3 { font-size: 15px; margin: 0; flex: 1; }
+.key { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.key svg { flex: none; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis-label { fill: var(--muted); font-size: 11px; }
+.chart .ref { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; }
+.chart .actual { stroke: var(--accent); stroke-width: 2; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.chart .end-dot { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+.chart .end-label { font-size: 12px; font-weight: 600; fill: var(--text); }
+.chart .hair { stroke: var(--muted); stroke-width: 1; }
+.chart .hit { fill: transparent; cursor: crosshair; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+  white-space: nowrap; display: none; z-index: 2;
+}
+.tip .d { color: var(--muted); margin-bottom: 2px; }
+.tip .r { display: flex; align-items: center; gap: 6px; }
+.tip .r b { font-variant-numeric: tabular-nums; }
+.tip .r span { color: var(--muted); }
+details.data { margin-top: 6px; font-size: 13px; color: var(--muted); }
+details.data summary { cursor: pointer; }
+table.data { border-collapse: collapse; width: 100%; margin-top: 6px; font-variant-numeric: tabular-nums; }
+table.data th, table.data td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+table.data th { color: var(--muted); font-weight: 500; }
+table.data td { color: var(--text); }
+.changes { padding: 12px 18px; margin-bottom: 16px; }
+.changes h3 { font-size: 15px; margin: 0 0 6px; }
+.changes ul { margin: 0; padding-left: 20px; }
+.changes li { margin: 2px 0; }
+.changes .o { color: var(--muted); }
+.kr .t .name { cursor: pointer; }
+.kr .t .name:hover { text-decoration: underline; text-decoration-color: var(--muted); }
+.meta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 2px; flex-wrap: wrap; }
+.meta svg { flex: none; }
+.spark { stroke: var(--accent); stroke-width: 1.5; fill: none; stroke-linejoin: round; }
+.meta .ok { color: var(--green); } .meta .warn { color: var(--yellow); }
+#histDlg { width: min(560px, calc(100vw - 32px)); }
+#histDlg .body { padding: 20px; display: grid; gap: 10px; max-height: 80vh; overflow: auto; }
+#histDlg h3 { margin: 0; }
 .foot a { color: inherit; }
 @media (max-width: 640px) {
   .kr { grid-template-columns: 22px minmax(0, 1fr) auto; }
@@ -158,6 +202,14 @@ dialog label > input:not([type=radio]) { color: var(--text); font-size: 15px; wi
       <button type="submit" class="primary">保存</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="histDlg">
+  <div class="body">
+    <h3 id="histTitle">历史记录</h3>
+    <div id="histBody"></div>
+    <div class="actions"><button type="button" data-close>关闭</button></div>
+  </div>
 </dialog>
 
 <dialog id="objDlg">
@@ -255,12 +307,13 @@ function render() {
       <button class="primary" data-create="quarter" data-date="${esc(S.today)}">新建 ${esc(S.this_quarter)} OKR</button></div>`;
   }
   const q = S.quarter;
-  if (q) html += renderSummary(q) + q.objectives.map(renderObjective).join("");
+  if (q) html += renderSummary(q) + renderTrend(q) + renderChanges(q) + q.objectives.map(renderObjective).join("");
   if (q && !q.objectives.length) {
     html += `<div class="card hero"><p>这个季度还没有目标。建议 2~4 个目标，每个目标 2~4 个 KR。</p>
       <button class="primary" data-act="addObj">＋ 添加第一个目标</button></div>`;
   }
   $("#app").innerHTML = html;
+  drawTrend();
 }
 
 function fileLink(kind, label) {
@@ -305,6 +358,170 @@ function renderObjective(o, oi) {
   </section>`;
 }
 
+// ---------- 历史数据：趋势、预测、本周进展
+
+const n1 = (v) => String(Math.round(v * 10) / 10);
+const DAY = 86400000;
+const svgEl = (tag, attrs) => {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+};
+
+function renderMeta(k) {
+  if (k.dropped) return "";
+  const parts = [];
+  if (k.spark.length >= 2) {
+    const w = 60, h = 16, step = w / (k.spark.length - 1);
+    const pts = k.spark.map((p, i) => `${(i * step).toFixed(1)},${(h - 1 - p * (h - 2)).toFixed(1)}`).join(" ");
+    parts.push(`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline class="spark" points="${pts}"/></svg>`);
+  }
+  const f = k.forecast;
+  const unit = k.unit ? " " + esc(k.unit) : "";
+  if (f && f.projected != null) {
+    const pace = `近 4 周 ${n1(f.rate_per_week)}${unit}/周`;
+    parts.push(f.on_track
+      ? `<span>${pace}</span><span class="ok">✓ 预计 ${esc(f.eta.slice(5))} 完成</span>`
+      : `<span>${pace}，季末约 ${n1(f.projected)}/${fmt(k.target)}</span><span class="warn">⚠ 需 ${n1(f.needed_per_week)}${unit}/周</span>`);
+  } else if (f) {
+    parts.push(`<span>还需 ${n1(f.needed_per_week)}${unit}/周</span>`);
+  }
+  return parts.length ? `<div class="meta">${parts.join("")}</div>` : "";
+}
+
+function renderChanges(q) {
+  if (!q.week_changes.length) return "";
+  return `<section class="card changes"><h3>📈 本周进展</h3><ul>${q.week_changes
+    .map((c) => `<li><span class="o">${esc(c.objective)} · </span>${esc(c.text)}</li>`).join("")}</ul></section>`;
+}
+
+function timeProgressAt(q, date) {
+  const start = Date.parse(q.start), end = Date.parse(q.end), d = Date.parse(date);
+  return Math.min(Math.max((d - start + DAY) / (end - start + DAY), 0), 1);
+}
+
+// 图例 / 提示框里的线条样例：实线 = 完成度，虚线 = 时间进度
+const lineKey = (dash) => `<svg width="18" height="8" aria-hidden="true"><line x1="0" y1="4" x2="18" y2="4" stroke="${dash ? "var(--muted)" : "var(--accent)"}" stroke-width="2" ${dash ? 'stroke-dasharray="4 3"' : ""}/></svg>`;
+
+function renderTrend(q) {
+  if (!q.series.length) {
+    return `<section class="card trend"><div class="trend-head"><h3>进度趋势</h3></div>
+      <div class="empty" style="padding:4px 0">从现在开始记录，之后每次更新进度都会画在这里。</div></section>`;
+  }
+  const rows = q.series.slice().reverse()
+    .map((p) => `<tr><td>${esc(p.date)}</td><td>${pct(p.progress)}</td><td>${pct(timeProgressAt(q, p.date))}</td></tr>`).join("");
+  return `<section class="card trend">
+    <div class="trend-head"><h3>进度趋势</h3>
+      <span class="key">${lineKey(false)}完成度</span><span class="key">${lineKey(true)}时间进度</span></div>
+    <div class="chart" id="trendChart"><div class="tip" id="trendTip"></div></div>
+    <details class="data"><summary>查看数据表</summary>
+      <table class="data"><thead><tr><th>日期</th><th>完成度</th><th>时间进度</th></tr></thead><tbody>${rows}</tbody></table>
+    </details>
+  </section>`;
+}
+
+function drawTrend() {
+  const box = $("#trendChart");
+  if (!box || !S.quarter) return;
+  box.querySelector("svg")?.remove();
+  const q = S.quarter, pts = q.series;
+  const W = Math.max(box.clientWidth, 280), H = 160, m = { l: 36, r: 82, t: 10, b: 22 };
+  const start = Date.parse(q.start), end = Date.parse(q.end);
+  const x = (d) => m.l + ((Date.parse(d) - start) / (end - start)) * (W - m.l - m.r);
+  const y = (p) => m.t + (1 - p) * (H - m.t - m.b);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", tabindex: "0",
+    "aria-label": `${q.name} 完成度趋势，当前 ${pct(pts[pts.length - 1].progress)}` });
+
+  for (const p of [0, 0.5, 1]) {
+    svg.append(svgEl("line", { class: "grid", x1: m.l, x2: W - m.r, y1: y(p), y2: y(p) }));
+    const t = svgEl("text", { class: "axis-label", x: m.l - 6, y: y(p) + 4, "text-anchor": "end" });
+    t.textContent = pct(p);
+    svg.append(t);
+  }
+  for (let d = new Date(start); d <= end; d.setUTCMonth(d.getUTCMonth() + 1)) {
+    const iso = d.toISOString().slice(0, 10);
+    const t = svgEl("text", { class: "axis-label", x: x(iso), y: H - 4 });
+    t.textContent = `${d.getUTCMonth() + 1}月`;
+    svg.append(t);
+  }
+  svg.append(svgEl("line", { class: "ref", x1: x(q.start), y1: y(0), x2: x(q.end), y2: y(1) }));
+  const refLabel = svgEl("text", { class: "axis-label", x: x(q.end) + 6, y: y(1) + 4 });
+  refLabel.textContent = "时间 100%";
+  svg.append(refLabel);
+
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.date).toFixed(1)},${y(p.progress).toFixed(1)}`).join("");
+  svg.append(svgEl("path", { class: "actual", d: path }));
+  const last = pts[pts.length - 1];
+  svg.append(svgEl("circle", { class: "end-dot", cx: x(last.date), cy: y(last.progress), r: 4 }));
+  const endLabel = svgEl("text", { class: "end-label", x: x(last.date) + 8, y: y(last.progress) + 4 });
+  endLabel.textContent = `完成度 ${pct(last.progress)}`;
+  svg.append(endLabel);
+
+  // 悬停 / 键盘：十字线吸附到最近的一天，提示框同时给出两条线的数值
+  const hair = svgEl("line", { class: "hair", y1: m.t, y2: H - m.b, visibility: "hidden" });
+  const dot = svgEl("circle", { class: "end-dot", r: 4, visibility: "hidden" });
+  const hit = svgEl("rect", { class: "hit", x: m.l, y: 0, width: W - m.l - m.r, height: H });
+  svg.append(hair, dot, hit);
+  const tip = $("#trendTip");
+  let idx = pts.length - 1;
+  const show = (i) => {
+    idx = Math.max(0, Math.min(pts.length - 1, i));
+    const p = pts[idx], px = x(p.date), py = y(p.progress);
+    hair.setAttribute("x1", px); hair.setAttribute("x2", px); hair.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("visibility", "visible");
+    tip.replaceChildren();
+    const d = document.createElement("div"); d.className = "d"; d.textContent = p.date; tip.append(d);
+    for (const [label, val, dash] of [["完成度", p.progress, false], ["时间进度", timeProgressAt(q, p.date), true]]) {
+      const r = document.createElement("div"); r.className = "r";
+      r.insertAdjacentHTML("beforeend", lineKey(dash));
+      const b = document.createElement("b"); b.textContent = pct(val);
+      const sp = document.createElement("span"); sp.textContent = label;
+      r.append(b, sp); tip.append(r);
+    }
+    tip.style.display = "block";
+    const scale = box.clientWidth / W;
+    tip.style.left = Math.min(px * scale + 12, box.clientWidth - tip.offsetWidth) + "px";
+    tip.style.top = Math.max(py * scale - 20, 0) + "px";
+  };
+  const hide = () => { hair.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+  hit.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect();
+    const t = start + ((e.clientX - r.left) * (W / r.width) - m.l) / (W - m.l - m.r) * (end - start);
+    let best = 0;
+    pts.forEach((p, i) => { if (Math.abs(Date.parse(p.date) - t) < Math.abs(Date.parse(pts[best].date) - t)) best = i; });
+    show(best);
+  });
+  hit.addEventListener("pointerleave", hide);
+  svg.addEventListener("focus", () => show(idx));
+  svg.addEventListener("blur", hide);
+  svg.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); show(idx + (e.key === "ArrowRight" ? 1 : -1)); }
+  });
+  box.prepend(svg);
+}
+
+async function openHistory(k) {
+  $("#histTitle").textContent = k.title;
+  const body = $("#histBody");
+  body.textContent = "加载中…";
+  $("#histDlg").showModal();
+  try {
+    const r = await fetch("/api/history?id=" + encodeURIComponent(k.id));
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    const rows = data.rows.slice().reverse().map((h) => `<tr>
+      <td>${esc(h.ts.replace("T", " ").slice(0, 16))}</td>
+      <td>${h.target == null ? "" : `${fmt(h.current)}/${fmt(h.target)}`}</td>
+      <td>${pct(h.progress)}</td>
+      <td>${h.dropped ? "放弃" : h.checked ? "完成" : ""}</td>
+      <td>${h.source === "gui" ? "界面" : "文件"}</td></tr>`).join("");
+    body.innerHTML = `<div style="color:var(--muted);font-size:13px">共 ${data.rows.length} 条记录，${esc(data.kr.first_seen.slice(0, 10))} 开始跟踪。只在数值变化时记录。</div>
+      <table class="data"><thead><tr><th>时间</th><th>数值</th><th>进度</th><th>状态</th><th>来源</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    body.textContent = e.message;
+  }
+}
+
 function renderKr(k, ki) {
   const numeric = k.target != null;
   const cls = k.dropped ? "dropped" : k.checked ? "done" : "";
@@ -316,7 +533,7 @@ function renderKr(k, ki) {
     : `<span></span>`;
   return `<div class="kr ${cls}" data-k="${ki}">
     <input type="checkbox" data-act="toggle" ${k.checked ? "checked" : ""} ${k.dropped ? "disabled" : ""} title="标记完成">
-    <div class="t">${esc(k.title)}</div>
+    <div class="t"><span class="name" data-act="history" title="查看历史记录">${esc(k.title)}</span>${renderMeta(k)}</div>
     ${stepper}
     <div class="mini">${k.dropped ? `<span class="chip" style="color:var(--muted)">已放弃</span>` : bar(k.progress) + `<span class="num">${pct(k.progress)}</span>`}</div>
     <div class="ops">
@@ -414,6 +631,7 @@ $("#app").addEventListener("click", (e) => {
       return;
     case "addKr": return openKrDialog("添加 KR", null, (kr) => post("/api/kr/add", { line: o.line, expect: o.raw, kr }));
     case "editObj": return openObjDialog("编辑目标", o, (d) => post("/api/objective/save", { line: o.line, expect: o.raw, ...d }));
+    case "history": return openHistory(k);
     case "delObj":
       if (confirm(`删除整个目标和它下面的 ${o.krs.length} 个 KR？\n\n${o.title}`)) post("/api/objective/delete", { line: o.line, expect: o.raw });
       return;
@@ -430,6 +648,8 @@ $("#app").addEventListener("change", (e) => {
 });
 
 $("#quarterSel").addEventListener("change", (e) => { selected = e.target.value; load(); });
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawTrend, 150); });
 $("#addObjBtn").addEventListener("click", addObjective);
 $("#reloadBtn").addEventListener("click", () => load().then(() => toast("已重新读取文件")));
 // 从 Obsidian 切回来时自动重新读取
